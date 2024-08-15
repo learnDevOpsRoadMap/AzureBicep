@@ -20,4 +20,4 @@ jobs:
         azcliversion: latest
         inlineScript: |
           az group create --name bicepSampleVM --location eastus
-          az deployment group create --resource-group bicepSampleVM --template-file main.bicep --parameters adminUsername=heddala adminPassword=bicepVMpass12
+          az deployment group create --resource-group bicepSampleVM --template-file main.bicep --parameters adminUsername=heddala adminPasswordOrKey=bicepVMpass12 dnsLabelPrefix=test12vmbiceha
