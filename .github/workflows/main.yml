@@ -1,3 +1,4 @@
+# Trigger
 on: [push]
 
 name: AzureCLIVM
