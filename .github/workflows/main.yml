@@ -6,6 +6,9 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
     - name: Azure Login
       uses: azure/login@v2
       with:
@@ -16,4 +19,5 @@ jobs:
       with:
         azcliversion: latest
         inlineScript: |
-          az account show
+          az group create --name bicepSampleVM --location eastus
+          az deployment group create --resource-group bicepSampleVM --template-file main.bicep --parameters adminUsername=heddala adminPassword=bicepVMpass12
