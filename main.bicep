@@ -1,67 +1,44 @@
+@description('The name of your Virtual Machine.')
+param vmName string = 'simpleLinuxVM'
+
 @description('Username for the Virtual Machine.')
 param adminUsername string
 
-@description('Password for the Virtual Machine.')
-@minLength(12)
+@description('Type of authentication to use on the Virtual Machine. SSH key is recommended.')
+@allowed([
+  'sshPublicKey'
+  'password'
+])
+param authenticationType string = 'password'
+
+@description('SSH Key or password for the Virtual Machine. SSH key is recommended.')
 @secure()
-param adminPassword string
+param adminPasswordOrKey string
 
 @description('Unique DNS Name for the Public IP used to access the Virtual Machine.')
-param dnsLabelPrefix string = toLower('${vmName}-${uniqueString(resourceGroup().id, vmName)}')
+param dnsLabelPrefix string = toLower('${vmName}-${uniqueString(resourceGroup().id)}')
 
-@description('Name for the Public IP used to access the Virtual Machine.')
-param publicIpName string = 'myPublicIP'
-
-@description('Allocation method for the Public IP used to access the Virtual Machine.')
+@description('The Ubuntu version for the VM. This will pick a fully patched image of this given Ubuntu version.')
 @allowed([
-  'Dynamic'
-  'Static'
+  'Ubuntu-2004'
+  'Ubuntu-2204'
 ])
-param publicIPAllocationMethod string = 'Dynamic'
-
-@description('SKU for the Public IP used to access the Virtual Machine.')
-@allowed([
-  'Basic'
-  'Standard'
-])
-param publicIpSku string = 'Basic'
-
-@description('The Windows version for the VM. This will pick a fully patched image of this given Windows version.')
-@allowed([
-  '2016-datacenter-gensecond'
-  '2016-datacenter-server-core-g2'
-  '2016-datacenter-server-core-smalldisk-g2'
-  '2016-datacenter-smalldisk-g2'
-  '2016-datacenter-with-containers-g2'
-  '2016-datacenter-zhcn-g2'
-  '2019-datacenter-core-g2'
-  '2019-datacenter-core-smalldisk-g2'
-  '2019-datacenter-core-with-containers-g2'
-  '2019-datacenter-core-with-containers-smalldisk-g2'
-  '2019-datacenter-gensecond'
-  '2019-datacenter-smalldisk-g2'
-  '2019-datacenter-with-containers-g2'
-  '2019-datacenter-with-containers-smalldisk-g2'
-  '2019-datacenter-zhcn-g2'
-  '2022-datacenter-azure-edition'
-  '2022-datacenter-azure-edition-core'
-  '2022-datacenter-azure-edition-core-smalldisk'
-  '2022-datacenter-azure-edition-smalldisk'
-  '2022-datacenter-core-g2'
-  '2022-datacenter-core-smalldisk-g2'
-  '2022-datacenter-g2'
-  '2022-datacenter-smalldisk-g2'
-])
-param OSVersion string = '2022-datacenter-azure-edition'
-
-@description('Size of the virtual machine.')
-param vmSize string = 'Standard_D1_v2'
+param ubuntuOSVersion string = 'Ubuntu-2004'
 
 @description('Location for all resources.')
 param location string = resourceGroup().location
 
-@description('Name of the virtual machine.')
-param vmName string = 'simple-vm'
+@description('The size of the VM')
+param vmSize string = 'Standard_D2s_v3'
+
+@description('Name of the VNET')
+param virtualNetworkName string = 'vNet'
+
+@description('Name of the subnet in the virtual network')
+param subnetName string = 'Subnet'
+
+@description('Name of the Network Security Group')
+param networkSecurityGroupName string = 'SecGroupNet'
 
 @description('Security Type of the Virtual Machine.')
 @allowed([
@@ -70,13 +47,36 @@ param vmName string = 'simple-vm'
 ])
 param securityType string = 'TrustedLaunch'
 
-var storageAccountName = 'bootdiags${uniqueString(resourceGroup().id)}'
-var nicName = 'myVMNic'
-var addressPrefix = '10.0.0.0/16'
-var subnetName = 'Subnet'
-var subnetPrefix = '10.0.0.0/24'
-var virtualNetworkName = 'MyVNET'
-var networkSecurityGroupName = 'default-NSG'
+var imageReference = {
+  'Ubuntu-2004': {
+    publisher: 'Canonical'
+    offer: '0001-com-ubuntu-server-focal'
+    sku: '20_04-lts-gen2'
+    version: 'latest'
+  }
+  'Ubuntu-2204': {
+    publisher: 'Canonical'
+    offer: '0001-com-ubuntu-server-jammy'
+    sku: '22_04-lts-gen2'
+    version: 'latest'
+  }
+}
+var publicIPAddressName = '${vmName}PublicIP'
+var networkInterfaceName = '${vmName}NetInt'
+var osDiskType = 'Standard_LRS'
+var subnetAddressPrefix = '10.1.0.0/24'
+var addressPrefix = '10.1.0.0/16'
+var linuxConfiguration = {
+  disablePasswordAuthentication: true
+  ssh: {
+    publicKeys: [
+      {
+        path: '/home/${adminUsername}/.ssh/authorized_keys'
+        keyData: adminPasswordOrKey
+      }
+    ]
+  }
+}
 var securityProfileJson = {
   uefiSettings: {
     secureBootEnabled: true
@@ -85,57 +85,58 @@ var securityProfileJson = {
   securityType: securityType
 }
 var extensionName = 'GuestAttestation'
-var extensionPublisher = 'Microsoft.Azure.Security.WindowsAttestation'
+var extensionPublisher = 'Microsoft.Azure.Security.LinuxAttestation'
 var extensionVersion = '1.0'
 var maaTenantName = 'GuestAttestation'
-var maaEndpoint = substring('emptyString', 0, 0)
+var maaEndpoint = substring('emptystring', 0, 0)
 
-resource storageAccount 'Microsoft.Storage/storageAccounts@2022-05-01' = {
-  name: storageAccountName
+resource networkInterface 'Microsoft.Network/networkInterfaces@2023-09-01' = {
+  name: networkInterfaceName
   location: location
-  sku: {
-    name: 'Standard_LRS'
-  }
-  kind: 'Storage'
-}
-
-resource publicIp 'Microsoft.Network/publicIPAddresses@2022-05-01' = {
-  name: publicIpName
-  location: location
-  sku: {
-    name: publicIpSku
-  }
   properties: {
-    publicIPAllocationMethod: publicIPAllocationMethod
-    dnsSettings: {
-      domainNameLabel: dnsLabelPrefix
+    ipConfigurations: [
+      {
+        name: 'ipconfig1'
+        properties: {
+          subnet: {
+            id: virtualNetwork.properties.subnets[0].id
+          }
+          privateIPAllocationMethod: 'Dynamic'
+          publicIPAddress: {
+            id: publicIPAddress.id
+          }
+        }
+      }
+    ]
+    networkSecurityGroup: {
+      id: networkSecurityGroup.id
     }
   }
 }
 
-resource networkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2022-05-01' = {
+resource networkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
   name: networkSecurityGroupName
   location: location
   properties: {
     securityRules: [
       {
-        name: 'default-allow-3389'
+        name: 'SSH'
         properties: {
           priority: 1000
+          protocol: 'Tcp'
           access: 'Allow'
           direction: 'Inbound'
-          destinationPortRange: '3389'
-          protocol: 'Tcp'
-          sourcePortRange: '*'
           sourceAddressPrefix: '*'
+          sourcePortRange: '*'
           destinationAddressPrefix: '*'
+          destinationPortRange: '22'
         }
       }
     ]
   }
 }
 
-resource virtualNetwork 'Microsoft.Network/virtualNetworks@2022-05-01' = {
+resource virtualNetwork 'Microsoft.Network/virtualNetworks@2023-09-01' = {
   name: virtualNetworkName
   location: location
   properties: {
@@ -148,92 +149,65 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2022-05-01' = {
       {
         name: subnetName
         properties: {
-          addressPrefix: subnetPrefix
-          networkSecurityGroup: {
-            id: networkSecurityGroup.id
-          }
+          addressPrefix: subnetAddressPrefix
+          privateEndpointNetworkPolicies: 'Enabled'
+          privateLinkServiceNetworkPolicies: 'Enabled'
         }
       }
     ]
   }
 }
 
-resource nic 'Microsoft.Network/networkInterfaces@2022-05-01' = {
-  name: nicName
+resource publicIPAddress 'Microsoft.Network/publicIPAddresses@2023-09-01' = {
+  name: publicIPAddressName
   location: location
-  properties: {
-    ipConfigurations: [
-      {
-        name: 'ipconfig1'
-        properties: {
-          privateIPAllocationMethod: 'Dynamic'
-          publicIPAddress: {
-            id: publicIp.id
-          }
-          subnet: {
-            id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, subnetName)
-          }
-        }
-      }
-    ]
+  sku: {
+    name: 'Basic'
   }
-  dependsOn: [
-
-    virtualNetwork
-  ]
+  properties: {
+    publicIPAllocationMethod: 'Dynamic'
+    publicIPAddressVersion: 'IPv4'
+    dnsSettings: {
+      domainNameLabel: dnsLabelPrefix
+    }
+    idleTimeoutInMinutes: 4
+  }
 }
 
-resource vm 'Microsoft.Compute/virtualMachines@2022-03-01' = {
+resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
   name: vmName
   location: location
   properties: {
     hardwareProfile: {
       vmSize: vmSize
     }
-    osProfile: {
-      computerName: vmName
-      adminUsername: adminUsername
-      adminPassword: adminPassword
-    }
     storageProfile: {
-      imageReference: {
-        publisher: 'MicrosoftWindowsServer'
-        offer: 'WindowsServer'
-        sku: OSVersion
-        version: 'latest'
-      }
       osDisk: {
         createOption: 'FromImage'
         managedDisk: {
-          storageAccountType: 'StandardSSD_LRS'
+          storageAccountType: osDiskType
         }
       }
-      dataDisks: [
-        {
-          diskSizeGB: 1023
-          lun: 0
-          createOption: 'Empty'
-        }
-      ]
+      imageReference: imageReference[ubuntuOSVersion]
     }
     networkProfile: {
       networkInterfaces: [
         {
-          id: nic.id
+          id: networkInterface.id
         }
       ]
     }
-    diagnosticsProfile: {
-      bootDiagnostics: {
-        enabled: true
-        storageUri: storageAccount.properties.primaryEndpoints.blob
-      }
+    osProfile: {
+      computerName: vmName
+      adminUsername: adminUsername
+      adminPassword: adminPasswordOrKey
+      linuxConfiguration: ((authenticationType == 'password') ? null : linuxConfiguration)
     }
-    securityProfile: ((securityType == 'TrustedLaunch') ? securityProfileJson : null)
+    securityProfile: (securityType == 'TrustedLaunch') ? securityProfileJson : null
   }
 }
 
-resource vmExtension 'Microsoft.Compute/virtualMachines/extensions@2022-03-01' = if ((securityType == 'TrustedLaunch') && ((securityProfileJson.uefiSettings.secureBootEnabled == true) && (securityProfileJson.uefiSettings.vTpmEnabled == true))) {
+resource vmExtension 'Microsoft.Compute/virtualMachines/extensions@2023-09-01' = if (securityType == 'TrustedLaunch' && securityProfileJson.uefiSettings.secureBootEnabled && securityProfileJson.uefiSettings.vTpmEnabled) {
   parent: vm
   name: extensionName
   location: location
@@ -254,4 +228,6 @@ resource vmExtension 'Microsoft.Compute/virtualMachines/extensions@2022-03-01' =
   }
 }
 
-output hostname string = publicIp.properties.dnsSettings.fqdn
+output adminUsername string = adminUsername
+output hostname string = publicIPAddress.properties.dnsSettings.fqdn
+output sshCommand string = 'ssh ${adminUsername}@${publicIPAddress.properties.dnsSettings.fqdn}'
